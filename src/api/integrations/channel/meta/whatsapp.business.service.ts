@@ -133,7 +133,18 @@ export class BusinessStartupService extends ChannelStartupService {
 
       this.eventHandler(content);
 
-      this.phoneNumber = createJid(content.messages ? content.messages[0].from : content.statuses[0]?.recipient_id);
+      // Determinar o phoneNumber baseado no tipo de conteúdo recebido
+      if (content.messages && content.messages.length > 0) {
+        this.phoneNumber = createJid(content.messages[0].from);
+      } else if (content.message_echoes && content.message_echoes.length > 0) {
+        // message_echoes são ecos das mensagens enviadas pelo próprio número
+        this.phoneNumber = createJid(content.message_echoes[0].to);
+      } else if (content.statuses && content.statuses.length > 0) {
+        this.phoneNumber = createJid(content.statuses[0].recipient_id);
+      } else {
+        this.logger.warn('Nenhuma mensagem, status ou echo encontrado no conteúdo recebido');
+        return;
+      }
     } catch (error) {
       this.logger.error(error);
       throw new InternalServerErrorException(error?.toString());
@@ -392,10 +403,16 @@ export class BusinessStartupService extends ChannelStartupService {
       if (received.messages) {
         const message = received.messages[0]; // Añadir esta línea para definir message
 
+        // Determinar fromMe: true se é um echo ou se from == phone_number_id ou display_phone_number
+        const isFromMe =
+          received.isEcho === true ||
+          message.from === received.metadata?.phone_number_id ||
+          message.from === received.metadata?.display_phone_number;
+
         const key = {
           id: message.id,
           remoteJid: this.phoneNumber,
-          fromMe: message.from === received.metadata.phone_number_id,
+          fromMe: isFromMe,
         };
 
         if (message.type === 'sticker') {
@@ -926,11 +943,34 @@ export class BusinessStartupService extends ChannelStartupService {
         } else {
           this.logger.warn(`Tipo de mensaje no reconocido: ${message.type}`);
         }
-      } else if (content.statuses) {
+      } else if (content.message_echoes && content.message_echoes.length > 0) {
+        // message_echoes são ecos das mensagens enviadas pelo próprio número
+        // Converter message_echoes para o formato de messages para processamento
+        const echoMessage = content.message_echoes[0];
+        this.logger.log(`Processando message_echo do tipo: ${echoMessage.type}`);
+
+        // Criar estrutura compatível com o formato esperado
+        // Adicionar flag isEcho para que messageHandle saiba que fromMe = true
+        const convertedContent = {
+          ...content,
+          isEcho: true, // Flag para indicar que é um echo (mensagem enviada pelo próprio número)
+          messages: content.message_echoes.map((echo: any) => ({
+            ...echo,
+            from: echo.from,
+            id: echo.id,
+            timestamp: echo.timestamp,
+            type: echo.type,
+            text: echo.text,
+          })),
+        };
+
+        // Processar como mensagem enviada (fromMe = true)
+        this.messageHandle(convertedContent, database, settings);
+      } else if (content.statuses && content.statuses.length > 0) {
         // Procesar actualizaciones de estado
         this.messageHandle(content, database, settings);
       } else {
-        this.logger.warn('No se encontraron mensajes ni estados en el contenido recibido');
+        this.logger.warn('No se encontraron mensajes, message_echoes ni estados en el contenido recibido');
       }
     } catch (error) {
       this.logger.error('Error en eventHandler:');
