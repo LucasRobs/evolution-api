@@ -131,8 +131,6 @@ export class BusinessStartupService extends ChannelStartupService {
     try {
       this.loadChatwoot();
 
-      this.eventHandler(content);
-
       // Determinar o phoneNumber baseado no tipo de conteúdo recebido
       if (content.messages && content.messages.length > 0) {
         this.phoneNumber = createJid(content.messages[0].from);
@@ -145,6 +143,8 @@ export class BusinessStartupService extends ChannelStartupService {
         this.logger.warn('Nenhuma mensagem, status ou echo encontrado no conteúdo recebido');
         return;
       }
+
+      this.eventHandler(content);
     } catch (error) {
       this.logger.error(error);
       throw new InternalServerErrorException(error?.toString());
