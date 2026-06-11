@@ -396,9 +396,20 @@ export class BusinessStartupService extends ChannelStartupService {
   protected async messageHandle(received: any, database: Database, settings: any) {
     try {
       let messageRaw: any;
-      let pushName: any;
+      const firstMessage = received.messages?.[0];
+      const firstContact = received.contacts?.[0];
+      const contactPhone =
+        firstContact?.profile?.phone ?? firstContact?.wa_id ?? firstContact?.phone ?? firstContact?.input;
+      const messageRemoteJid = received.isEcho ? firstMessage?.to : firstMessage?.from;
+      const remoteJidSource = messageRemoteJid || contactPhone;
+      const remoteJid = remoteJidSource ? createJid(remoteJidSource) : this.phoneNumber;
+      const pushName =
+        firstContact?.profile?.name ?? firstContact?.name ?? firstContact?.formatted_name ?? firstContact?.pushName;
 
-      if (received.contacts) pushName = received.contacts[0].profile.name;
+      if (!remoteJid && received.messages) {
+        this.logger.warn('Unable to identify remoteJid for received message');
+        return;
+      }
 
       if (received.messages) {
         const message = received.messages[0]; // Añadir esta línea para definir message
@@ -411,7 +422,7 @@ export class BusinessStartupService extends ChannelStartupService {
 
         const key = {
           id: message.id,
-          remoteJid: this.phoneNumber,
+          remoteJid,
           fromMe: isFromMe,
         };
 
@@ -714,29 +725,21 @@ export class BusinessStartupService extends ChannelStartupService {
           });
         }
 
-        const contact = await this.prismaRepository.contact.findFirst({
-          where: { instanceId: this.instanceId, remoteJid: key.remoteJid },
-        });
-
         const contactRaw: any = {
-          remoteJid: received.contacts[0].profile.phone,
-          pushName,
-          // profilePicUrl: '',
+          remoteJid: key.remoteJid,
           instanceId: this.instanceId,
         };
+        if (pushName) contactRaw.pushName = pushName;
 
         if (contactRaw.remoteJid === 'status@broadcast') {
           return;
         }
 
-        if (contact) {
-          const contactRaw: any = {
-            remoteJid: received.contacts[0].profile.phone,
-            pushName,
-            // profilePicUrl: '',
-            instanceId: this.instanceId,
-          };
+        const contact = await this.prismaRepository.contact.findFirst({
+          where: { instanceId: this.instanceId, remoteJid: contactRaw.remoteJid },
+        });
 
+        if (contact) {
           this.sendDataWebhook(Events.CONTACTS_UPDATE, contactRaw);
 
           if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
